@@ -53,6 +53,8 @@ CREATE TABLE IF NOT EXISTS reports (
     markdown TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_runs_link_status ON sync_runs (link_name, status, id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_one_running_per_link
+    ON sync_runs (link_name) WHERE status = 'running';
 CREATE INDEX IF NOT EXISTS idx_conflicts_run ON conflicts (run_id);
 """
 
@@ -120,11 +122,14 @@ class StateStore:
                 f"link {link_name!r} already has an active run (id={row['id']}, "
                 f"started={row['started']}); refusing to start a second run"
             )
-        cur = self._conn.execute(
-            "INSERT INTO sync_runs (program, config_path, link_name, started, status, dry_run)"
-            " VALUES (?, ?, ?, ?, 'running', ?)",
-            (program, config_path, link_name, _iso(_now()), int(dry_run)),
-        )
+        try:
+            cur = self._conn.execute(
+                "INSERT INTO sync_runs (program, config_path, link_name, started, status, dry_run)"
+                " VALUES (?, ?, ?, ?, 'running', ?)",
+                (program, config_path, link_name, _iso(_now()), int(dry_run)),
+            )
+        except sqlite3.IntegrityError as exc:  # lost a race with a concurrent run
+            raise StateError(f"link {link_name!r} already has an active run") from exc
         self._conn.commit()
         return int(cur.lastrowid)
 

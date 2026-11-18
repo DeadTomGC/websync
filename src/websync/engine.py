@@ -2,8 +2,9 @@
 
 One :class:`LinkRunner` per link executes the algorithm from the plan:
 
-1. Record a run row; load ``since`` = last successful run's start (minus an
-   overlap margin; hash comparison makes re-processing harmless).
+1. Record a run row; load ``since`` = last *clean* run's start (minus an
+   overlap margin; hash comparison makes re-processing harmless). Runs that
+   ended with errors or conflicts are ``partial`` and do not advance it.
 2. Fetch changed items from BOTH sides.
 3. Classify each pair: create / update / conflict / no-op — using the hashes
    stored in ``id_map`` as the source of truth (never cross-tool timestamps).
@@ -387,7 +388,12 @@ class SyncEngine:
             )
             try:
                 stats = runner.run()
-                self.state.finish_run(run_id, "success", stats.model_dump())
+                # Runs with errors/conflicts are "partial": they do NOT advance the
+                # sync window (state.last_successful_started only counts "success"),
+                # so unresolved items are re-examined next run instead of being lost.
+                # Hash comparison makes re-processing already-synced items a no-op.
+                status = "partial" if (stats.errors or stats.conflicts) else "success"
+                self.state.finish_run(run_id, status, stats.model_dump())
                 markdown = render_report(
                     program=self.config.program,
                     link=link,

@@ -89,7 +89,7 @@ class CameoTWCAdapter:
         session = self._client.session
         session.auth = (self.settings.username, self.settings.password)
         try:
-            data = self._client.post(self.settings.auth_path) or {}
+            data = self._client.post(self.settings.auth_path, idempotent=True) or {}
         finally:
             session.auth = None
         token = data.get("token") or data.get("jwt") or data.get("access_token")
@@ -160,7 +160,7 @@ class CameoTWCAdapter:
             json_body=self._to_payload(type_=item.type, fields=item.fields),
         )
         if not data or "id" not in data:
-            raise SyncError(self.tool_name, f"create response missing id: {data!r}")
+            raise SyncError(self.tool_name, "create response missing id")
         return str(data["id"])
 
     def update(self, native_id: str, changes: dict) -> None:

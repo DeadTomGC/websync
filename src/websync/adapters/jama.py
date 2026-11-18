@@ -104,13 +104,14 @@ class JamaAdapter:
         if resp.status_code >= 400:
             raise SyncError(
                 self.tool_name,
-                f"oauth token request -> HTTP {resp.status_code}: {resp.text[:300]}",
+                f"oauth token request -> HTTP {resp.status_code}",
             )
-        token = resp.json().get("access_token")
+        try:
+            token = resp.json().get("access_token")
+        except (ValueError, AttributeError):
+            token = None
         if not token:
-            raise SyncError(
-                self.tool_name, f"oauth response missing access_token: {resp.text[:300]}"
-            )
+            raise SyncError(self.tool_name, "oauth response missing access_token")
         self._token = str(token)
         self._client.set_headers({"Authorization": f"Bearer {self._token}"})
 
@@ -210,7 +211,7 @@ class JamaAdapter:
         data = self._client.post(f"{API_ROOT}/items", json_body=payload) or {}
         created = data.get("data") or {}
         if "id" not in created:
-            raise SyncError(self.tool_name, f"create response missing id: {data!r}")
+            raise SyncError(self.tool_name, "create response missing id")
         native_id = str(created["id"])
         if custom:
             self._patch_fields(native_id, custom)
@@ -276,6 +277,11 @@ def _nest_custom_fields(custom: dict) -> dict:
     """``fieldData.<filterId>.<fieldId>`` -> ``{<filterId>: {<fieldId>: v}}``."""
     nested: dict = {}
     for key, value in custom.items():
-        _, filter_id, field_id, *_ = key.split(".")
+        parts = key.split(".")
+        if len(parts) != 3 or not all(parts[1:]):
+            raise SyncError(
+                "jama", f"bad custom field path {key!r}; expected fieldData.<filterId>.<fieldId>"
+            )
+        _, filter_id, field_id = parts
         nested.setdefault(filter_id, {})[field_id] = value
     return nested

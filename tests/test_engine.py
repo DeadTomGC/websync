@@ -168,6 +168,20 @@ def test_conflict_skip_and_report(env):
     assert "CONFLICT" in report
 
 
+def test_run_with_conflicts_is_partial_and_does_not_advance_window(env):
+    state, adapters, _ = env
+    adapters["toolA"].seed("A1", "requirement", {"name": "v1", "desc": "d"})
+    clean = run_once(env, make_config(BASE_CONFIG))[0]
+    assert state.get_run(clean["run_id"])["status"] == "success"
+    window = state.last_successful_started("link-a-b")
+    target_id = _only_target_id(adapters["toolB"])
+    adapters["toolA"].update("A1", {"name": "src-change"})
+    adapters["toolB"].update(target_id, {"name": "tgt-change"})
+    res = run_once(env, make_config(BASE_CONFIG))[0]
+    assert state.get_run(res["run_id"])["status"] == "partial"
+    assert state.last_successful_started("link-a-b") == window
+
+
 def test_conflict_newest_wins(env):
     config = make_config(BASE_CONFIG.replace("skip_and_report", "newest_wins"))
     _, adapters, _ = env
