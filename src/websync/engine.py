@@ -73,6 +73,10 @@ class LinkRunner:
     # ------------------------------------------------------------------ run
 
     def run(self) -> RunStats:
+        # Fail fast with a clear run status if a tool is unreachable.
+        self.source.healthcheck()
+        self.target.healthcheck()
+
         since = self.state.last_successful_started(self.link.name)
         whence = (since - OVERLAP_MARGIN) if since else EPOCH
 
@@ -320,26 +324,40 @@ class SyncEngine:
     def __init__(
         self,
         config: ProgramConfig,
-        adapters: dict[str, Adapter],
-        state: StateStore,
+        adapters: dict[str, Adapter] | None = None,
+        state: StateStore | None = None,
         config_path: str = "",
         dry_run: bool = False,
         reports_dir: str = "reports",
+        adapter_factory=None,
     ) -> None:
+        """``adapters`` maps tool name -> Adapter; alternatively pass
+        ``adapter_factory(tool_name, scope) -> Adapter`` which lets the CLI
+        build per-link adapters (real tools need each link's scope)."""
+        if state is None:
+            raise ValueError("state is required")
         self.config = config
-        self.adapters = adapters
+        self.adapters = adapters or {}
         self.state = state
         self.config_path = config_path
         self.dry_run = dry_run
         self.reports_dir = reports_dir
+        self.adapter_factory = adapter_factory
+
+    def _adapters_for(self, link: LinkConfig) -> tuple[Adapter, Adapter]:
+        if self.adapter_factory is not None:
+            return (
+                self.adapter_factory(link.source, link.scope.get("source")),
+                self.adapter_factory(link.target, link.scope.get("target")),
+            )
+        return self.adapters[link.source], self.adapters[link.target]
 
     def run(self, link_filter: str | None = None) -> list[dict]:
         results: list[dict] = []
         for link in self.config.links:
             if link_filter and link.name != link_filter:
                 continue
-            source = self.adapters[link.source]
-            target = self.adapters[link.target]
+            source, target = self._adapters_for(link)
             try:
                 run_id = self.state.start_run(
                     self.config.program,

@@ -21,7 +21,7 @@ dev = [
     "pytest>=8.2",
     "pytest-cov>=5.0",
     "ruff>=0.4",
-    "respx>=0.21",
+    "responses>=0.25",
 ]
 
 [project.scripts]

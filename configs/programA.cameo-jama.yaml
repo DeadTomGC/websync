@@ -1,30 +1,30 @@
 # Example mapping config: Cameo Teamwork Cloud <-> Jama requirements.
-# See docs/plan/03-mapping-configuration-spec.md for the full schema.
+# See docs/plan/03-mapping-configuration-spec.md for the full schema and
+# docs/tools/{cameo-twc,jama}.md for each tool's field conventions.
 program: programA
 links:
   - name: cameo-jama-requirements
     source: cameo_twc
     target: jama
     types:
-      requirement: requirement
-      interface: interfaceRequirement
+      requirement: requirement    # Jama item type key (resolved via /rest/v1/itemtypes)
     scope:
       source:
-        project: "Program A / SysModel"   # TWC project path/ID
+        project: "Program A / SysModel"   # TWC project name or numeric ID
       target:
-        project: 123                       # Jama container/project ID
+        project: 123                       # Jama numeric project/container ID (required)
         item_type_filter: [requirement]
     fields:
       title:
-        source: name
-        target: name
+        source: name            # TWC element name
+        target: name            # Jama core field
       text:
-        source: specification
-        target: description
-        format: plain
+        source: specification    # TWC element property
+        target: description     # Jama core field
+        format: plain            # canonical format (see docs/tools/*.md)
       status:
-        source: status
-        target: status
+        source: status           # TWC element property
+        target: fieldData.412.100   # Jama custom field: filter 412, field 100
         value_map:
           draft: "In Progress"
           approved: "Approved"

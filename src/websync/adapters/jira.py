@@ -15,3 +15,7 @@ class JiraAdapter:
 
     def __init__(self, *_args, **_kwargs) -> None:
         raise NotImplementedError("JiraAdapter arrives in Phase 3")
+
+    @classmethod
+    def from_env(cls, scope=None) -> JiraAdapter:
+        raise NotImplementedError("JiraAdapter arrives in Phase 3")

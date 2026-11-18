@@ -15,7 +15,7 @@ and record API notes in `docs/tools/<tool>.md` as we learn them.
 | `requests` + `tenacity` | HTTP + retries/backoff | All custom adapters |
 | `python-dotenv` | Local `.env` secrets | CI uses real env vars; this is dev convenience |
 | `jinja2` | Markdown report templates | Reporting artifacts |
-| `pytest`, `respx`, `ruff` | Test/lint stack | `respx` mocks `requests` in adapter tests |
+| `pytest`, `responses`, `ruff` | Test/lint stack | `responses` mocks `requests` in adapter tests |
 
 All addresses/ports are configurable via `<TOOL>_BASE_URL` env vars
 (e.g., `https://cameo.internal.example.com:8443/twc/v1`) — nothing is

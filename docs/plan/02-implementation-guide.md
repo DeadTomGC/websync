@@ -32,7 +32,7 @@ order; each phase ends in a green pipeline.
 
 - `pyproject.toml` with dependencies (see `04-library-integrations.md` for the
   full list and rationale), dev extras: `pytest`, `pytest-cov`, `ruff`,
-  `respx` (HTTP mocking), `mypy` optional.
+  `responses` (HTTP mocking for `requests`), `mypy` optional.
 - `src/websync/` skeleton: `cli.py` (typer app with `run`, `validate-config`,
   `status`, `report`), `models.py` (pydantic `SyncItem`, `Change`,
   `Conflict`), `adapters/base.py` (the `Adapter` Protocol + `SyncError`
@@ -76,7 +76,7 @@ adapters, covering create/update/conflict/no-op/idempotent-rerun.
   community wrappers are unmaintained.
 - Add `configs/` example: requirements link with field map (see
   `03-mapping-configuration-spec.md`).
-- Integration tests: mock HTTP with `respx`; never require live servers in CI.
+- Integration tests: mock HTTP with `responses`; never require live servers in CI.
   Add `tests/live/` (skipped by default via marker) for manual verification
   against real internal instances.
 

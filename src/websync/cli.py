@@ -47,17 +47,34 @@ def validate_config(configs: list[Path]) -> None:
     raise typer.Exit(code=1 if failed else 0)
 
 
-def _load_adapter(name: str) -> object:
-    """Instantiate an adapter from the registry (or the in-memory fake)."""
+def _build_adapter_factory(fake: bool):
+    """Build ``factory(tool, scope) -> Adapter``, memoized per (tool, project).
+
+    Real adapters are constructed from environment settings + the link's
+    scope for that side (see docs/tools/*.md); ``--fake`` swaps in-memory
+    adapters so the pipeline can be exercised without network access.
+    """
     from websync.adapters.fake import InMemoryAdapter
 
-    if name == "fake":
-        return InMemoryAdapter()
-    if name not in ADAPTER_REGISTRY:
-        raise typer.BadParameter(f"unknown tool {name!r} (known: {sorted(ADAPTER_REGISTRY)})")
-    module_path, _, class_name = ADAPTER_REGISTRY[name].rpartition(".")
-    adapter_cls = getattr(importlib.import_module(module_path), class_name)
-    return adapter_cls()
+    if fake:
+        return lambda tool, scope: InMemoryAdapter()
+
+    def factory(tool: str, scope):
+        if tool not in ADAPTER_REGISTRY:
+            raise typer.BadParameter(f"unknown tool {tool!r} (known: {sorted(ADAPTER_REGISTRY)})")
+        module_path, _, class_name = ADAPTER_REGISTRY[tool].rpartition(".")
+        adapter_cls = getattr(importlib.import_module(module_path), class_name)
+        return adapter_cls.from_env(scope)
+
+    cache: dict[tuple[str, str], object] = {}
+
+    def memoized(tool: str, scope):
+        key = (tool, str(scope.project) if scope else "")
+        if key not in cache:
+            cache[key] = factory(tool, scope)
+        return cache[key]
+
+    return memoized
 
 
 @app.command()
@@ -80,6 +97,7 @@ def run(
     ),
 ) -> None:
     """Run a synchronization pass for a project config."""
+    from websync.adapters.base import SyncError
     from websync.config import load_config
     from websync.engine import SyncEngine
     from websync.state import StateError, StateStore
@@ -90,23 +108,31 @@ def run(
         typer.echo(f"invalid config {config}: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
-    tools = {link.source for link in cfg.links} | {link.target for link in cfg.links}
+    factory = _build_adapter_factory(fake)
     try:
-        adapters = {t: _load_adapter("fake" if fake else t) for t in tools}
+        # Pre-build every link's adapters so missing env vars / unimplemented
+        # tools fail fast with a clear message instead of mid-run.
+        # (Careful: do not shadow the `--link` option here.)
+        for lnk in cfg.links:
+            factory(lnk.source, lnk.scope.get("source"))
+            factory(lnk.target, lnk.scope.get("target"))
     except NotImplementedError as exc:
         typer.echo(f"adapter not implemented yet: {exc}", err=True)
         typer.echo("hint: pass --fake to exercise the pipeline with in-memory adapters.", err=True)
+        raise typer.Exit(code=2) from exc
+    except SyncError as exc:
+        typer.echo(f"cannot construct adapters: {exc}", err=True)
         raise typer.Exit(code=2) from exc
 
     state = StateStore(db)
     try:
         engine = SyncEngine(
             cfg,
-            adapters,
-            state,
+            state=state,
             config_path=str(config),
             dry_run=dry_run,
             reports_dir=str(reports_dir),
+            adapter_factory=factory,
         )
         results = engine.run(link_filter=link)
     except StateError as exc:

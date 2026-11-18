@@ -41,7 +41,7 @@ are CI/CD variables; locally, copy it to `.env` (gitignored).
 |---|---|---|
 | 0 | Repo, venv, CI, CLI skeleton, config schema | ✅ done |
 | 1 | Sync engine, SQLite state, mapping layer, reports | ✅ done |
-| 2 | Cameo TWC ↔ Jama requirements | planned |
+| 2 | Cameo TWC ↔ Jama requirements | ✅ done — live check against a scratch project pending |
 | 3 | Jama ↔ Jira epics/stories | planned |
 | 4 | Hardening / scheduled runs | planned |
 | 5–6 | Teamcenter & Windchill releases | future |
