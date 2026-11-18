@@ -1,0 +1,64 @@
+# GitLab CI for websync.
+# Stages: lint -> test -> sync. The sync job is manual/scheduled only.
+
+stages:
+  - lint
+  - test
+  - sync
+
+variables:
+  PIP_CACHE_DIR: ".cache/pip"
+
+cache:
+  key:
+    files:
+      - pyproject.toml
+  paths:
+    - .cache/pip/
+
+.base:
+  image: python:3.12-slim
+  before_script:
+    - python -m venv .venv
+    - source .venv/bin/activate
+    - pip install -e ".[dev]"
+
+lint:
+  extends: .base
+  stage: lint
+  script:
+    - ruff check src tests
+    - ruff format --check src tests
+
+test:
+  extends: .base
+  stage: test
+  script:
+    - pytest -v
+  coverage: '/TOTAL.*\s+(\d+)%/'
+
+# Validate all mapping configs in the repo on every merge request.
+validate-config:
+  extends: .base
+  stage: test
+  script:
+    - websync validate-config configs/*.yaml
+  rules:
+    - exists:
+        - configs/*.yaml
+
+# Manual or scheduled sync run. Enable per-project via CI/CD variables.
+sync:
+  extends: .base
+  stage: sync
+  script:
+    - websync run --config configs/${WEBSYNC_CONFIG:-programA.cameo-jama.yaml}
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: always
+    - when: manual
+  artifacts:
+    when: always
+    paths:
+      - reports/
+    expire_in: 30 days

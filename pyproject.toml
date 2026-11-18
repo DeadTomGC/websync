@@ -1,0 +1,52 @@
+[project]
+name = "websync"
+version = "0.1.0"
+description = "Synchronize items across internal engineering tools (Cameo TWC, Jama, Jira, later Teamcenter/Windchill), run from GitLab CI."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "LicenseRef-Proprietary"
+dependencies = [
+    "typer>=0.12",
+    "pydantic>=2.7",
+    "PyYAML>=6.0",
+    "requests>=2.32",
+    "tenacity>=8.3",
+    "python-dotenv>=1.0",
+    "Jinja2>=3.1",
+]
+
+[project.optional-dependencies]
+jira = ["jira>=3.6"]
+dev = [
+    "pytest>=8.2",
+    "pytest-cov>=5.0",
+    "ruff>=0.4",
+    "respx>=0.21",
+]
+
+[project.scripts]
+websync = "websync.cli:app"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+# B008: typer's DSL requires function calls (typer.Option) in argument defaults.
+ignore = ["B008"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "live: tests that hit real internal servers (run manually, never in CI)",
+]
+addopts = "-m 'not live'"
