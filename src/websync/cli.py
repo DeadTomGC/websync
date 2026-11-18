@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 
 import typer
 
 from websync import __version__
+from websync.adapters import ADAPTER_REGISTRY
 
 app = typer.Typer(
     name="websync",
@@ -21,24 +23,41 @@ def version() -> None:
     typer.echo(f"websync {__version__}")
 
 
-@app.command()
+@app.command(name="validate-config")
 def validate_config(configs: list[Path]) -> None:
     """Validate one or more mapping YAML configs.
 
-    Exits non-zero with a human-readable error list if any config is invalid.
+    Also builds every link's Mapper, so bad transforms/formats/value maps fail
+    here instead of mid-sync. Exits non-zero on any failure.
     """
     from websync.config import load_config
+    from websync.mapping import Mapper
 
     failed = False
     for path in configs:
         try:
             cfg = load_config(path)
+            for link in cfg.links:
+                Mapper.for_link(link)  # raises on unknown transforms/formats
             link_names = [link.name for link in cfg.links]
             typer.echo(f"OK  {path}  (program={cfg.program}, links={link_names})")
         except Exception as exc:  # noqa: BLE001 - CLI boundary
             failed = True
             typer.echo(f"FAIL {path}: {exc}", err=True)
     raise typer.Exit(code=1 if failed else 0)
+
+
+def _load_adapter(name: str) -> object:
+    """Instantiate an adapter from the registry (or the in-memory fake)."""
+    from websync.adapters.fake import InMemoryAdapter
+
+    if name == "fake":
+        return InMemoryAdapter()
+    if name not in ADAPTER_REGISTRY:
+        raise typer.BadParameter(f"unknown tool {name!r} (known: {sorted(ADAPTER_REGISTRY)})")
+    module_path, _, class_name = ADAPTER_REGISTRY[name].rpartition(".")
+    adapter_cls = getattr(importlib.import_module(module_path), class_name)
+    return adapter_cls()
 
 
 @app.command()
@@ -50,25 +69,125 @@ def run(
     link: str | None = typer.Option(
         None, "--link", help="Run only the named link from the config."
     ),
+    db: Path = typer.Option(
+        Path("state.db"), "--db", envvar="WEBSYNC_DB_PATH", help="SQLite state DB path."
+    ),
+    reports_dir: Path = typer.Option(
+        Path("reports"), "--reports-dir", help="Directory for Markdown reports."
+    ),
+    fake: bool = typer.Option(
+        False, "--fake", help="Use in-memory fake adapters (demo/testing only)."
+    ),
 ) -> None:
-    """Run a synchronization pass for a project config (Phase 1: not yet wired)."""
-    typer.echo("The sync engine arrives in Phase 1; nothing to run yet.")
-    typer.echo(f"(config={config}, dry_run={dry_run}, link={link})")
-    raise typer.Exit(code=0)
+    """Run a synchronization pass for a project config."""
+    from websync.config import load_config
+    from websync.engine import SyncEngine
+    from websync.state import StateError, StateStore
+
+    try:
+        cfg = load_config(config)
+    except Exception as exc:  # noqa: BLE001 - CLI boundary
+        typer.echo(f"invalid config {config}: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    tools = {link.source for link in cfg.links} | {link.target for link in cfg.links}
+    try:
+        adapters = {t: _load_adapter("fake" if fake else t) for t in tools}
+    except NotImplementedError as exc:
+        typer.echo(f"adapter not implemented yet: {exc}", err=True)
+        typer.echo("hint: pass --fake to exercise the pipeline with in-memory adapters.", err=True)
+        raise typer.Exit(code=2) from exc
+
+    state = StateStore(db)
+    try:
+        engine = SyncEngine(
+            cfg,
+            adapters,
+            state,
+            config_path=str(config),
+            dry_run=dry_run,
+            reports_dir=str(reports_dir),
+        )
+        results = engine.run(link_filter=link)
+    except StateError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    finally:
+        state.close()
+
+    exit_code = 0
+    typer.echo(f"program {cfg.program}: {len(results)} link run(s)")
+    for result in results:
+        typer.echo(f"  link {result['link']}: {result['stats']} report={result['report']}")
+        if result["stats"].get("errors"):
+            exit_code = 1
+    raise typer.Exit(code=exit_code)
 
 
 @app.command()
-def status() -> None:
-    """Show recent sync runs and pending conflicts (Phase 1: not yet wired)."""
-    typer.echo("State reporting arrives in Phase 1.")
-    raise typer.Exit(code=0)
+def status(
+    db: Path = typer.Option(
+        Path("state.db"), "--db", envvar="WEBSYNC_DB_PATH", help="SQLite state DB path."
+    ),
+    limit: int = typer.Option(20, "--limit", help="How many recent runs to show."),
+) -> None:
+    """Show recent sync runs and pending conflicts."""
+    from websync.state import StateStore
+
+    if not db.exists():
+        typer.echo(f"no state database at {db}", err=True)
+        raise typer.Exit(code=1)
+    state = StateStore(db)
+    try:
+        runs = state.list_runs(limit)
+        if not runs:
+            typer.echo("no runs recorded yet.")
+            return
+        typer.echo(f"{'id':>4}  {'program':<12} {'link':<28} {'status':<8} dry  started")
+        pending = 0
+        for r in runs:
+            typer.echo(
+                f"{r['id']:>4}  {r['program']:<12} {r['link_name']:<28} "
+                f"{r['status']:<8} {'yes' if r['dry_run'] else 'no':<3}  {r['started']}"
+            )
+            if r["status"] == "running":
+                pending += 1
+        if pending:
+            typer.echo(f"note: {pending} run(s) still marked running", err=True)
+    finally:
+        state.close()
 
 
 @app.command()
-def report() -> None:
-    """Render the Markdown report for the last run (Phase 1: not yet wired)."""
-    typer.echo("Conflict reporting arrives in Phase 1.")
-    raise typer.Exit(code=0)
+def report(
+    db: Path = typer.Option(
+        Path("state.db"), "--db", envvar="WEBSYNC_DB_PATH", help="SQLite state DB path."
+    ),
+    run_id: int | None = typer.Option(
+        None, "--run", help="Report for a specific run (default: latest)."
+    ),
+) -> None:
+    """Print the Markdown report of a run."""
+    from websync.state import StateStore
+
+    if not db.exists():
+        typer.echo(f"no state database at {db}", err=True)
+        raise typer.Exit(code=1)
+    state = StateStore(db)
+    try:
+        if run_id is None:
+            latest = state.latest_run()
+            if latest is None:
+                typer.echo("no runs recorded yet.")
+                return
+            run_id = int(latest["id"])
+        markdown = state.get_report(run_id)
+        if markdown is None:
+            typer.echo(f"no report stored for run {run_id}", err=True)
+            raise typer.Exit(code=1)
+        typer.echo(markdown)
+    finally:
+        state.close()
 
 
 if __name__ == "__main__":

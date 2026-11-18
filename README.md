@@ -40,7 +40,7 @@ are CI/CD variables; locally, copy it to `.env` (gitignored).
 | Phase | Scope | Status |
 |---|---|---|
 | 0 | Repo, venv, CI, CLI skeleton, config schema | ✅ done |
-| 1 | Sync engine, SQLite state, mapping layer, reports | ⏳ next |
+| 1 | Sync engine, SQLite state, mapping layer, reports | ✅ done |
 | 2 | Cameo TWC ↔ Jama requirements | planned |
 | 3 | Jama ↔ Jira epics/stories | planned |
 | 4 | Hardening / scheduled runs | planned |

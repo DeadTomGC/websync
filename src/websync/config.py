@@ -19,10 +19,14 @@ class FieldMap(BaseModel):
 
     source: str
     target: str
-    format: str | None = None  # html | plain | markdown
+    format: str | None = None  # canonical (normalized) format: html | plain | markdown
+    source_format: str | None = None  # source tool's native text format (optional)
+    target_format: str | None = None  # target tool's native text format (optional)
     value_map: dict[str, str | int] | None = None  # source-tool value -> target-tool value
-    transform: str | None = None  # named hook in websync.transforms
-    relation: str | None = None  # e.g. parent_child; resolved via id_map
+    transform: str | None = None  # named hook in websync.transforms (source->normalized only)
+    relation: str | None = (
+        None  # e.g. parent_child; resolved via id_map (Phase 1: recorded, not resolved)
+    )
 
 
 class ScopeConfig(BaseModel):
@@ -43,6 +47,9 @@ class LinkConfig(BaseModel):
     source: str
     target: str
     types: dict[str, str]
+    reverse_types: dict[str, str] | None = (
+        None  # target type -> source type, when folding is ambiguous
+    )
     scope: dict[str, ScopeConfig] = Field(min_length=1, max_length=2)
     fields: dict[str, FieldMap] = Field(default_factory=dict)
     direction: str = "bidirectional"  # bidirectional | source_to_target | target_to_source
