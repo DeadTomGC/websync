@@ -1,0 +1,15 @@
+"""Pytest configuration for the websync test suite.
+
+Loads the local .env file (if present) before tests are collected, so that:
+- live tests' skipif conditions (e.g. CAMEO_TWC_BASE_URL) see values from
+  .env, and
+- anything reading tool settings behaves the same as a local CLI run.
+
+Real environment variables always win (override=False), so CI variables are
+unaffected. Unit tests never require .env — no value there is needed for the
+default suite.
+"""
+
+from websync.env import load_env
+
+load_env()

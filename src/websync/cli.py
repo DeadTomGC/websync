@@ -9,6 +9,12 @@ import typer
 
 from websync import __version__
 from websync.adapters import ADAPTER_REGISTRY
+from websync.env import load_env
+
+# Load .env from the CWD (or nearest parent) before any command runs, so
+# adapter settings and envvar-backed options (e.g. WEBSYNC_DB_PATH) see it.
+# Real env vars take precedence (override=False), so CI is unaffected.
+load_env()
 
 app = typer.Typer(
     name="websync",
