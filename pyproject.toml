@@ -9,6 +9,8 @@ dependencies = [
     "typer>=0.12",
     "pydantic>=2.7",
     "PyYAML>=6.0",
+    "atwc>=1.1",  # Cameo Teamwork Cloud client; brings aiohttp
+    "aiohttp>=3.9",  # used directly by the TWC adapter (timeouts, TLS control)
     "requests>=2.32",
     "tenacity>=8.3",
     "python-dotenv>=1.0",
@@ -50,3 +52,9 @@ markers = [
     "live: tests that hit real internal servers (run manually, never in CI)",
 ]
 addopts = "-m 'not live'"
+filterwarnings = [
+    # atwc (and our TWCClient, which mirrors it) builds sessions with
+    # aiohttp.BasicAuth/`auth=`; deprecated for aiohttp 4.0 only.
+    "ignore:BasicAuth is deprecated:DeprecationWarning",
+    "ignore:The 'auth' parameter is deprecated:DeprecationWarning",
+]

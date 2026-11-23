@@ -43,9 +43,10 @@ sync engine.
               ┌────────▼──────┐ ┌──────▼────────┐
               │ Cameo TWC     │ │ Jama adapter  │   Adapters wrap upstream
               │ adapter       │ │               │   Python libs where they
-              └───────────────┘ └───────────────┘   exist (jira, etc.),
-                       ┌───────────────┐            thin `requests` clients
-                       │ Jira adapter  │            where they don't (TWC).
+              │ (atwc lib)    │ │               │   exist (atwc, jira),
+              └───────────────┘ └───────────────┘   thin `requests` clients
+                       ┌───────────────┐            where they don't (Jama).
+                       │ Jira adapter  │
                        └───────────────┘
    ┌──────────┐
    │ SQLite   │  ID mappings, sync runs, conflicts
@@ -70,9 +71,9 @@ sync engine.
    - `create(item: SyncItem) -> native_id`
    - `update(native_id, changes: dict)`
    - `healthcheck()`
-   Adapters wrap official/community Python client libraries where available;
-   otherwise a minimal `requests`-based client scoped to exactly the endpoints
-   we use.
+   Adapters wrap official/community Python client libraries where available
+   (`atwc` for Cameo TWC, `jira` for Jira); otherwise a minimal
+   `requests`-based client scoped to exactly the endpoints we use (Jama).
 4. **Mapping layer** (`src/websync/mapping.py`) — pure functions that translate
    `SyncItem` fields/types between two tools, driven entirely by the project
    YAML (see `03-mapping-configuration-spec.md`).

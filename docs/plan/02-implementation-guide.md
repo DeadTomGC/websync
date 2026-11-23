@@ -31,8 +31,12 @@ order; each phase ends in a green pipeline.
 ## Phase 0 — Scaffolding
 
 - `pyproject.toml` with dependencies (see `04-library-integrations.md` for the
-  full list and rationale), dev extras: `pytest`, `pytest-cov`, `ruff`,
-  `responses` (HTTP mocking for `requests`), `mypy` optional.
+  full list and rationale — includes `atwc` for the Cameo TWC adapter), dev
+  extras: `pytest`, `pytest-cov`, `ruff`, `responses` (HTTP mocking for
+  `requests`). The `atwc`/`aiohttp`-based TWC adapter is tested against a
+  small local stub HTTP server (`tests/httpstub.py`) instead of
+  `aioresponses`, which is incompatible with the aiohttp ≥ 3.13 wheels
+  required on Python 3.15. `mypy` optional.
 - `src/websync/` skeleton: `cli.py` (typer app with `run`, `validate-config`,
   `status`, `report`), `models.py` (pydantic `SyncItem`, `Change`,
   `Conflict`), `adapters/base.py` (the `Adapter` Protocol + `SyncError`
@@ -67,18 +71,25 @@ adapters, covering create/update/conflict/no-op/idempotent-rerun.
 
 ## Phase 2 — Cameo TWC ↔ Jama requirements
 
-- Write `adapters/cameo_twc.py` first (see `docs/tools/cameo-twc.md` notes in
-  `04-library-integrations.md` — no maintained Python lib exists, so this is
-  a minimal `requests` client: auth → project → elements/requirements CRUD,
-  with retries via `tenacity` and a `healthcheck()`).
+- Write `adapters/cameo_twc.py` first, as glue around the **`atwc`** package
+  (see `docs/tools/cameo-twc.md` and `04-library-integrations.md`). The
+  adapter: constructs an `atwc.client.Client` from `CAMEO_TWC_*` env vars,
+  bridges asyncio → sync via `asyncio.run()`, uses `atwc`'s
+  `ResourceBrowser`/`ModelBrowser` for project lookup and element reads,
+  and implements writes (create/update) via `atwc`'s generic
+  `client.post()` plus pagination. Add timeouts, retry-once, a
+  `healthcheck()`, and map `atwc` exceptions to `SyncError` — `atwc`
+  provides none of these itself.
 - Write `adapters/jama.py` using the Jama REST API (`/rest/v1/items`,
   filters, `/sync` endpoints as needed) — also a thin client since
   community wrappers are unmaintained.
 - Add `configs/` example: requirements link with field map (see
   `03-mapping-configuration-spec.md`).
-- Integration tests: mock HTTP with `responses`; never require live servers in CI.
-  Add `tests/live/` (skipped by default via marker) for manual verification
-  against real internal instances.
+- Integration tests: mock HTTP with `responses` for the Jama adapter and the
+  local stub server (`tests/httpstub.py`) for the `atwc`/`aiohttp`-based TWC
+  adapter; never require live servers in CI. Add `tests/live/` (skipped by
+  default via marker) for manual verification against real internal
+  instances.
 
 ## Phase 3 — Jama ↔ Jira epics/stories
 

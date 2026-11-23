@@ -1,4 +1,9 @@
-"""Engine behaviour with real adapters over mocked HTTP (wiring test)."""
+"""Engine behaviour with real adapters over mocked HTTP (wiring test).
+
+The Jama side is mocked with ``responses`` (requests-based); the Cameo TWC
+side runs the real atwc/aiohttp stack against a local stub HTTP server
+(see tests/httpstub.py for why not ``aioresponses``).
+"""
 
 from __future__ import annotations
 
@@ -33,35 +38,96 @@ links:
 """
 
 
+def _mock_twc(stub, project="Program A"):
+    """Register the atwc/atwc-endpoint routes an end-to-end run touches."""
+    rid = 7
+    stub.add("GET", "/login", status=204, repeat=20)
+    stub.add("GET", "/logout", status=204, repeat=20)
+    stub.add(
+        "GET",
+        "/resources?includeBody=true",
+        json=[{"ID": rid, "dcterms:title": f"{project}.MASTER"}],
+        repeat=20,
+    )
+    stub.add("GET", f"/resources/{rid}/revisions", json=["rev-1"], repeat=5)
+    stub.add(
+        "GET", f"/resources/{rid}/revisions/rev-1", json=[{"rootObjectIDs": ["root-1"]}], repeat=5
+    )
+    stub.add(
+        "POST",
+        f"/resources/{rid}/elements",
+        body=["root-1"],
+        json={
+            "root-1": {
+                "data": [
+                    {"meta": True},
+                    {"kerml:esiData": {"name": "model", "ownedElements": [{"@id": "req-101"}]}},
+                ]
+            }
+        },
+    )
+    req_element = {
+        "@type": "requirement",
+        "kerml:esiData": {
+            "name": "req 1",
+            "modified": NOW.isoformat(),
+            "taggedValue": [{"@id": "tv-101"}],
+        },
+    }
+    stub.add(
+        "POST",
+        f"/resources/{rid}/elements",
+        body=["req-101"],
+        json={"req-101": {"data": [{"meta": True}, req_element]}},
+    )
+    stub.add(
+        "POST",
+        f"/resources/{rid}/elements",
+        body=["tv-101"],
+        json={
+            "tv-101": {
+                "data": [
+                    {"meta": True},
+                    {
+                        "kerml:esiData": {
+                            "value": "body text",
+                            "tagDefinition": [{"@id": "def-spec"}],
+                        }
+                    },
+                ]
+            }
+        },
+        repeat=2,
+    )
+    stub.add(
+        "POST",
+        f"/resources/{rid}/elements",
+        body=["def-spec"],
+        json={"def-spec": {"data": [{"meta": True}, {"kerml:esiData": {"name": "specification"}}]}},
+    )
+    stub.add(
+        "GET",
+        f"/resources/{rid}/elements/def-spec",
+        json=[{"meta": True}, {"kerml:esiData": {"name": "specification"}}],
+    )
+
+
+def _twc_adapter(scope):
+    adapter = CameoTWCAdapter.from_env(scope)
+    adapter.settings.retry_multiplier = 0.0
+    return adapter
+
+
 @responses.activate
-def test_cameo_to_jama_end_to_end(monkeypatch, tmp_path):
-    monkeypatch.setenv("CAMEO_TWC_BASE_URL", "https://twc.example")
+def test_cameo_to_jama_end_to_end(monkeypatch, tmp_path, twc_stub):
+    _mock_twc(twc_stub)
+    monkeypatch.setenv("CAMEO_TWC_BASE_URL", twc_stub.url)
     monkeypatch.setenv("CAMEO_TWC_USER", "u")
     monkeypatch.setenv("CAMEO_TWC_PASSWORD", "p")
     monkeypatch.setenv("JAMA_BASE_URL", "https://jama.example")
     monkeypatch.setenv("JAMA_CLIENT_ID", "cid")
     monkeypatch.setenv("JAMA_CLIENT_SECRET", "secret")
 
-    # --- Cameo side
-    responses.post("https://twc.example/authentication", json={"token": "twc-tok"})
-    responses.get(
-        "https://twc.example/projects",
-        json={"projects": [{"id": 7, "name": "Program A"}]},
-    )
-    responses.get(
-        "https://twc.example/projects/7/elements",
-        json={
-            "elements": [
-                {
-                    "id": 101,
-                    "name": "req 1",
-                    "type": "requirement",
-                    "modified": NOW.isoformat(),
-                    "properties": {"specification": "body text"},
-                }
-            ]
-        },
-    )
     # --- Jama side
     responses.post("https://jama.example/rest/oauth/token", json={"access_token": "jama-tok"})
     responses.get("https://jama.example/rest/v1/users/current", json={"data": {"id": 1}})
@@ -76,7 +142,7 @@ def test_cameo_to_jama_end_to_end(monkeypatch, tmp_path):
     state = StateStore(tmp_path / "state.db")
 
     adapters = {
-        "cameo_twc": CameoTWCAdapter.from_env(cfg.links[0].scope["source"]),
+        "cameo_twc": _twc_adapter(cfg.links[0].scope["source"]),
         "jama": JamaAdapter.from_env(cfg.links[0].scope["target"]),
     }
     engine = SyncEngine(cfg, adapters, state, reports_dir=str(tmp_path / "reports"))
@@ -102,20 +168,21 @@ def test_cameo_to_jama_end_to_end(monkeypatch, tmp_path):
         "description": "body text",
     }
     # pair recorded in state
-    pair = state.get_pair("cameo-jama", "source", "101")
+    pair = state.get_pair("cameo-jama", "source", "req-101")
     assert pair is not None and pair.target_id == "551"
 
 
 @responses.activate
-def test_unreachable_tool_marks_run_failed(monkeypatch, tmp_path):
-    monkeypatch.setenv("CAMEO_TWC_BASE_URL", "https://twc.example")
+def test_unreachable_tool_marks_run_failed(monkeypatch, tmp_path, twc_stub):
+    _mock_twc(twc_stub)
+    monkeypatch.setenv("CAMEO_TWC_BASE_URL", twc_stub.url)
     monkeypatch.setenv("CAMEO_TWC_USER", "u")
     monkeypatch.setenv("CAMEO_TWC_PASSWORD", "p")
     monkeypatch.setenv("JAMA_BASE_URL", "https://jama.example")
     monkeypatch.setenv("JAMA_CLIENT_ID", "cid")
     monkeypatch.setenv("JAMA_CLIENT_SECRET", "secret")
 
-    responses.post("https://twc.example/authentication", json={"token": "twc-tok"})
+    responses.post("https://jama.example/rest/oauth/token", json={"access_token": "jama-tok"})
 
     cfg = ProgramConfig.model_validate(__import__("yaml").safe_load(textwrap.dedent(CONFIG)))
     state = StateStore(tmp_path / "state.db")
@@ -125,7 +192,7 @@ def test_unreachable_tool_marks_run_failed(monkeypatch, tmp_path):
             raise SyncError("jama", "connection refused (simulated)")
 
     adapters = {
-        "cameo_twc": CameoTWCAdapter.from_env(cfg.links[0].scope["source"]),
+        "cameo_twc": _twc_adapter(cfg.links[0].scope["source"]),
         "jama": DeadJama.from_env(cfg.links[0].scope["target"]),
     }
     engine = SyncEngine(cfg, adapters, state, reports_dir=str(tmp_path / "reports"))

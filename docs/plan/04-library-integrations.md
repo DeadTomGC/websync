@@ -12,7 +12,8 @@ and record API notes in `docs/tools/<tool>.md` as we learn them.
 | `typer` | CLI framework | Type-hint-driven; generates `--help` for free |
 | `pydantic` (v2) | Models + YAML config validation | Single source of schema truth |
 | `pyyaml` | Config loading | Loaded *through* pydantic, never raw |
-| `requests` + `tenacity` | HTTP + retries/backoff | All custom adapters |
+| `atwc` | Teamwork Cloud REST client | Upstream lib for the Cameo TWC adapter (see below); brings `aiohttp` with it |
+| `requests` + `tenacity` | HTTP + retries/backoff | Custom adapters not covered by a library (Jama) |
 | `python-dotenv` | Local `.env` secrets | CI uses real env vars; this is dev convenience |
 | `jinja2` | Markdown report templates | Reporting artifacts |
 | `pytest`, `responses`, `ruff` | Test/lint stack | `responses` mocks `requests` in adapter tests |
@@ -24,17 +25,53 @@ so adapters accept an `INSECURE_SKIP_VERIFY` env var for staging.
 
 ## Per-tool assessment
 
-### Cameo Teamwork Cloud (requirements) — custom thin client
+### Cameo Teamwork Cloud (requirements) — use the `atwc` package
 
-- **Library:** none maintained exists on PyPI. (3rd-party wrappers like
-  `pyTWC` are stale/hobby projects — do not adopt; we'd inherit their bugs.)
-- **Approach:** `requests` client against TWC's REST API (`/twc/v1/...`):
-  auth (form login → session token), project lookup, element query/update.
-  TWC also exposes OSLC; prefer REST where CRUD is simpler, OSLC for
-  requirements-link queries if needed.
-- **Risk:** version differences between TWC installs. Mitigation: adapter
-  targets the REST API version declared in the project config
-  (`api_version:`), and `healthcheck()` verifies reachability + version
+- **Library:** **`atwc`** (PyPI, Apache-2.0, maintained by Archimedes
+  Exhibitions GmbH — https://github.com/amdx/atwc). Replaces the
+  internally written thin `requests` client for this tool. (Other 3rd-party
+  wrappers like `pyTWC` remain stale/hobby projects — still do not adopt.)
+- **What it provides:** an asyncio/`aiohttp` client (`atwc.client.Client`)
+  with HTTP Basic auth against TWC's `login`/`logout` endpoints (cookie-jar
+  session, `create_session()` context manager) and generic `get`/`post`
+  helpers, plus `ResourceBrowser` (project/resource tree, category paths)
+  and `ModelBrowser` (revisions, element fetch, batch element fetch, tagged
+  values, qualified names).
+- **Adapter approach:** `adapters/cameo_twc.py` becomes glue around `atwc`
+  rather than a from-scratch HTTP client. Because the sync engine is
+  synchronous, the adapter bridges via `asyncio.run()` internally; the
+  `Adapter` Protocol stays sync.
+- **Gaps we must cover in the adapter (atwc does not provide them):**
+  - **Writes:** `atwc` is read-focused (built for a Cameo Collaborator
+    publisher). `create`/`update` go through its generic `client.post()`
+    against the TWC REST endpoints we need — those calls, payload shapes,
+    and pagination live in our adapter and are the main thing to verify
+    against our TWC install.
+  - **Robustness:** no retries/backoff, no explicit timeouts, no
+    `Retry-After` handling. Wrap `atwc` calls with timeouts and retry-once
+    logic in the adapter to meet the adapter quality bar below.
+  - **Session/auth errors:** `atwc` raises on non-2xx
+    (`raise_for_status=True`); map its exceptions to our `SyncError`
+    hierarchy.
+- **Auth/env:** `CAMEO_TWC_BASE_URL` is the TWC API root (e.g.
+  `https://twc.internal:8111/osmc/`); `CAMEO_TWC_USER` /
+  `CAMEO_TWC_PASSWORD` feed `atwc.client.Client(api_url, login, password)`.
+  The old `CAMEO_TWC_AUTH_PATH` override is obsolete (login path is fixed
+  relative to the base URL in `atwc`); `INSECURE_SKIP_VERIFY` for
+  self-signed certs must be applied when constructing the `aiohttp` session
+  in our adapter wrapper.
+- **Risk:** `atwc` is a small, niche upstream (it self-describes as an
+  interface abstraction for one company's publisher, "not intended as a
+  general-purpose solution"). Mitigations: pin the version in
+  `pyproject.toml`; keep all `atwc` usage behind `adapters/cameo_twc.py`
+  so a breaking upstream change is contained; contract tests
+  (local stub HTTP server, `tests/httpstub.py`) plus `tests/live/`
+  verification against
+  a scratch project; if upstream turns out unusable for our TWC version,
+  the adapter is the only module to rewrite (falling back to a thin client
+  is a contained change).
+- **Risk:** version differences between TWC installs remain. Mitigation:
+  `api_version` in config; `healthcheck()` verifies reachability + version
   before each run and logs it.
 
 ### Jama (requirements, epics, stories) — custom thin client
@@ -79,8 +116,17 @@ so adapters accept an `INSECURE_SKIP_VERIFY` env var for staging.
 ## Adapter quality bar (every adapter, no exceptions)
 
 1. Implements the full `Adapter` Protocol (see `02-implementation-guide.md`).
-2. Retries with backoff (tenacity) on 5xx/timeouts; honors `Retry-After`.
+2. Retries with backoff (tenacity or equivalent) on 5xx/timeouts; honors
+   `Retry-After`. (For `atwc`-backed calls, implement this in the adapter —
+   upstream provides none.)
 3. Pagination on every list endpoint.
 4. Timeouts on every request (never hang a CI job).
 5. Structured logging of every request (URL, status, duration) at debug level.
-6. `respx`-based contract tests with fixtures captured from real responses.
+6. Contract tests with fixtures captured from real responses: `responses`
+   for `requests`-based adapters (Jama); for the `atwc`/`aiohttp`-based
+   TWC adapter, a small local stub HTTP server (`tests/httpstub.py`).
+   (`aioresponses`, the natural choice, is incompatible with the
+   aiohttp ≥ 3.13 wheels required on Python 3.15 — `ClientResponse`
+   signature change — and older aiohttp cannot be built on this platform;
+   the stub server gives the same properties while exercising the real
+   aiohttp + atwc stack.)
